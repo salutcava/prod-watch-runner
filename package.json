@@ -1,0 +1,20 @@
+{
+  "name": "prod-watch-runner",
+  "version": "0.1.0",
+  "description": "Self-hosted Docker runner for Prod Watch QA managed service",
+  "type": "module",
+  "main": "src/poll.mjs",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node src/poll.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.6"
+  }
+}
