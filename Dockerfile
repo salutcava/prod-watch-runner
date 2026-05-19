@@ -1,7 +1,9 @@
+# syntax=docker/dockerfile:1.7
 # Prod Watch Runner - image Docker multi-stage avec bundling/minification de qa-saas
 #
 # Stage 1 (builder) :
-#   - Clone qa-saas (repo prive) depuis git
+#   - Clone qa-saas (repo prive) depuis git via un secret BuildKit (non persiste
+#     dans aucun layer ni dans le cache de build)
 #   - Bundle + minify le runner CLI via esbuild en 1 seul fichier qa-saas.bundle.cjs
 #   - Le code source en clair de qa-saas n'apparait JAMAIS dans l'image finale
 #
@@ -15,15 +17,20 @@
 # ============================================================================
 FROM node:22-alpine AS builder
 WORKDIR /build
-ARG GITHUB_TOKEN
 ARG QA_SAAS_REF=main
 
 RUN apk add --no-cache git
 
-# Clone qa-saas. Le GITHUB_TOKEN est passé en --build-arg, JAMAIS commit.
-# Il sert UNIQUEMENT au clone et disparait avec le stage builder (eph monorepo).
-RUN git clone --depth 1 --branch "${QA_SAAS_REF}" \
-    "https://${GITHUB_TOKEN}@github.com/salutcava/qa-saas.git" qa-saas
+# Clone qa-saas (repo prive). Le token est monte en SECRET BuildKit pendant
+# UNIQUEMENT cette commande RUN : il n'apparait dans aucun layer, n'est pas
+# logge dans le build cache, et est inaccessible aux RUN suivants. Le fichier
+# /run/secrets/github_token n'existe que pendant l'execution de ce git clone.
+# Difference avec ARG GITHUB_TOKEN (precedente version) : evite le warning
+# SecretsUsedInArgOrEnv et bloque la lecture du token via le cache buildx.
+RUN --mount=type=secret,id=github_token,required=true \
+    git clone --depth 1 --branch "${QA_SAAS_REF}" \
+      "https://$(cat /run/secrets/github_token)@github.com/salutcava/qa-saas.git" \
+      qa-saas
 
 WORKDIR /build/qa-saas
 RUN npm ci --omit=dev

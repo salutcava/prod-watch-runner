@@ -58,8 +58,12 @@ jobs:
           tags: |
             ghcr.io/salutcava/prod-watch-runner:${{ steps.tags.outputs.tag }}
             ${{ steps.tags.outputs.extra && format('ghcr.io/salutcava/prod-watch-runner:{0}', steps.tags.outputs.extra) || '' }}
+          # Le token de pull qa-saas est passe via Docker BuildKit secrets
+          # (pas en --build-arg) pour eviter sa fuite dans le cache de build.
+          # Le secret est consomme uniquement par le RUN `git clone` du Dockerfile.
+          secrets: |
+            github_token=${{ secrets.QA_SAAS_PULL_TOKEN }}
           build-args: |
-            GITHUB_TOKEN=${{ secrets.QA_SAAS_PULL_TOKEN }}
             QA_SAAS_REF=${{ inputs.qa_saas_ref || 'main' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

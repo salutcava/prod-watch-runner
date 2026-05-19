@@ -26,7 +26,7 @@ echo ""
 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --build-arg "GITHUB_TOKEN=${GITHUB_TOKEN}" \
+  --secret "id=github_token,env=GITHUB_TOKEN" \
   --build-arg "QA_SAAS_REF=${QA_SAAS_REF}" \
   --tag "${IMAGE}:${TAG}" \
   --tag "${IMAGE}:$(date -u +%Y%m%d-%H%M%S)" \
