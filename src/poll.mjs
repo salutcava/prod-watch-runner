@@ -22,6 +22,7 @@ import { readRunnerToken, readDashboardUrl } from "./auth.mjs";
 import { sendHeartbeat, pollNextJob, pushRunResults } from "./api.mjs";
 import { executeJob } from "./executor.mjs";
 import { logger } from "./logger.mjs";
+import { touchHealth } from "./health.mjs";
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || "10000", 10);
 const HEARTBEAT_INTERVAL_MS = parseInt(process.env.HEARTBEAT_INTERVAL_MS || "30000", 10);
@@ -47,16 +48,27 @@ async function main() {
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
   });
 
+  // Marque le runner healthy des le demarrage pour eviter que le HEALTHCHECK
+  // ne sorte unhealthy pendant le start_period si le 1er heartbeat traine.
+  await touchHealth();
+
   // Heartbeat initial pour signaler immediatement la presence du runner
   // (sinon il faut attendre 30s avant que findActiveRunnerForClient remonte
   // ce runner cote dashboard).
   await sendHeartbeat({ dashboardUrl, token });
+  await touchHealth();
 
-  // Heartbeat periodique (setInterval, separe de la boucle poll)
+  // Heartbeat periodique (setInterval, separe de la boucle poll). On touche
+  // le fichier de fraicheur apres chaque tentative (succes ou exception
+  // reseau) : le HEALTHCHECK signale "le runner tente activement de
+  // communiquer", pas "le dashboard est joignable". Un dashboard down ne
+  // doit pas faire crasher le container client.
   const heartbeatTimer = setInterval(() => {
-    sendHeartbeat({ dashboardUrl, token }).catch((err) => {
-      logger.warn("Heartbeat exception (non bloquant)", { error: String(err) });
-    });
+    sendHeartbeat({ dashboardUrl, token })
+      .catch((err) => {
+        logger.warn("Heartbeat exception (non bloquant)", { error: String(err) });
+      })
+      .finally(() => touchHealth());
   }, HEARTBEAT_INTERVAL_MS);
 
   // Boucle poll : pas un setInterval fixe (sinon plusieurs polls peuvent se
@@ -70,6 +82,11 @@ async function main() {
       logger.warn("Poll exception (retry implicite via boucle)", { error: String(err) });
       job = null;
     }
+
+    // Chaque iteration de poll = preuve que la boucle d'evenements n'est pas
+    // bloquee. Touche meme quand la requete poll a leve : on signale que le
+    // process est vivant, pas que le dashboard est joignable.
+    await touchHealth();
 
     if (!job) {
       await sleep(POLL_INTERVAL_MS);

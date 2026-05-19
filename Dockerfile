@@ -85,5 +85,13 @@ ENV QA_SAAS_ENTRY=/app/qa-saas/runner.cjs
 ENV NODE_ENV=production
 
 # Le runner ne fait pas de bind sur un port (poll only sortant). Pas de EXPOSE.
+
+# Healthcheck : la boucle ecrit /tmp/runner.health a chaque iteration. Si le
+# fichier devient obsolete (>90s = 3 heartbeats rates), Docker passe le
+# container "unhealthy". start_period = 60s pour tolerer un demarrage lent
+# (npm/playwright cold start) avant la 1ere verif.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=2 \
+  CMD ["node", "/app/src/healthcheck.mjs"]
+
 # Lancement direct sans pid 1 wrapper (Node gere SIGTERM/SIGINT correctement).
 CMD ["node", "/app/src/poll.mjs"]

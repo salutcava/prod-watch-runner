@@ -55,6 +55,19 @@ Toutes les options se passent par variable d'environnement (`-e VAR=value` dans 
 | `PROD_WATCH_URL` | `https://app.prod-watch.com` | URL du dashboard. À surcharger si vous testez contre une instance de démo |
 | `POLL_INTERVAL_MS` | `10000` | Intervalle de récupération des nouveaux tests à exécuter (ms) |
 | `HEARTBEAT_INTERVAL_MS` | `30000` | Intervalle d'envoi du signal "je suis vivant" (ms) |
+| `RUNNER_HEALTH_FILE` | `/tmp/runner.health` | Fichier de fraîcheur lu par le `HEALTHCHECK` Docker |
+| `RUNNER_HEALTH_STALE_MS` | `90000` | Au delà de ce délai sans mise à jour du fichier, le container passe `unhealthy` |
+
+## Healthcheck Docker
+
+Le container expose un `HEALTHCHECK` natif. La boucle de poll écrit `/tmp/runner.health` à chaque itération ; si le fichier n'est pas rafraîchi pendant plus de 90 secondes (3 heartbeats ratés), Docker passe le container `unhealthy`.
+
+```bash
+docker inspect --format='{{.State.Health.Status}}' prod-watch-runner
+# healthy | unhealthy | starting
+```
+
+Branchable directement sur un orchestrateur (Swarm, Nomad, Kubernetes via livenessProbe `exec`) ou sur des outils de supervision type Portainer / Datadog Agent qui remontent l'état health Docker.
 
 ## Mettre à jour
 
