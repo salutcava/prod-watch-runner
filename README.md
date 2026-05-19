@@ -58,6 +58,26 @@ Toutes les options se passent par variable d'environnement (`-e VAR=value` dans 
 | `RUNNER_HEALTH_FILE` | `/tmp/runner.health` | Fichier de fraîcheur lu par le `HEALTHCHECK` Docker |
 | `RUNNER_HEALTH_STALE_MS` | `90000` | Au delà de ce délai sans mise à jour du fichier, le container passe `unhealthy` |
 | `HEARTBEAT_FAILURE_WARN_THRESHOLD` | `3` | Nombre de heartbeats KO d'affilée avant de logger un warn explicite (utile pour diagnostiquer un dashboard inaccessible) |
+| `RUNNER_QUEUE_DIR` | `/tmp/runner-queue` | Dossier de persistance des résultats de tests quand le dashboard est temporairement inaccessible. À bind-mounter sur un volume si vous voulez survivre aux `docker restart` |
+| `RUNNER_QUEUE_MAX_SIZE` | `100` | Nombre maximum de payloads stockés localement. Au-delà, les nouveaux résultats sont droppés avec un log d'erreur |
+
+## Résilience aux coupures dashboard
+
+Si le dashboard est injoignable au moment de pousser les résultats d'un test (split réseau, déploiement en cours, etc.), le runner persiste le payload sur disque et rejoue automatiquement au prochain cycle de poll. Aucun résultat n'est perdu tant que la queue n'est pas pleine.
+
+Pour survivre aussi à un redémarrage du container, montez un volume sur `RUNNER_QUEUE_DIR` :
+
+```bash
+docker run -d \
+  --name prod-watch-runner \
+  --restart unless-stopped \
+  -v /var/lib/prod-watch-runner-queue:/var/lib/prod-watch-runner-queue \
+  -e RUNNER_QUEUE_DIR=/var/lib/prod-watch-runner-queue \
+  -e RUNNER_TOKEN=pwr_votreslug_xxxxxxxxxxxxxxxx \
+  ghcr.io/salutcava/prod-watch-runner:latest
+```
+
+Sans volume, la queue vit dans `/tmp` et est perdue au `docker rm` (mais pas au `docker restart` sur le même container).
 
 ## Healthcheck Docker
 

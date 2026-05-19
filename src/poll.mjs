@@ -23,6 +23,7 @@ import { sendHeartbeat, pollNextJob, pushRunResults } from "./api.mjs";
 import { executeJob } from "./executor.mjs";
 import { logger } from "./logger.mjs";
 import { touchHealth } from "./health.mjs";
+import { enqueuePayload, replayPendingPayloads } from "./queue.mjs";
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || "10000", 10);
 const HEARTBEAT_INTERVAL_MS = parseInt(process.env.HEARTBEAT_INTERVAL_MS || "30000", 10);
@@ -85,6 +86,19 @@ async function main() {
   // chevaucher si un job prend > poll_interval). On chaine sleep + poll en
   // sequence.
   while (!shuttingDown) {
+    // Avant de demander un nouveau job, tenter de rejouer ce qui n'a pas pu
+    // etre pousse aux iterations precedentes (dashboard down/timeout). On le
+    // fait dans la boucle plutot qu'en background pour eviter d'avoir 2 push
+    // en parallele vers le meme runId si jamais le replay reussit pendant
+    // qu'un job courant pousse.
+    try {
+      await replayPendingPayloads((payload) =>
+        pushRunResults({ dashboardUrl, token, payload })
+      );
+    } catch (err) {
+      logger.warn("Replay queue exception (non bloquant)", { error: String(err) });
+    }
+
     let job;
     try {
       job = await pollNextJob({ dashboardUrl, token });
@@ -138,7 +152,11 @@ async function main() {
       });
     } else {
       logger.error(`Job ${job.jobId} : push KO`, { status: pushResult.status });
-      // TODO V2 : persister le payload en local et retry plus tard.
+      // Push echoue apres retries internes : on persiste localement pour
+      // tenter de rejouer au prochain tour de boucle. Le payload est
+      // self-contained (slug, status, passed/failed, etc.), donc rejouable
+      // tel quel sans reexecuter qa-saas.
+      await enqueuePayload({ ...payload, job_id: job.jobId });
     }
     currentJobId = null;
 
