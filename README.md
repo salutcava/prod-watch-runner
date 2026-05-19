@@ -57,6 +57,7 @@ Toutes les options se passent par variable d'environnement (`-e VAR=value` dans 
 | `HEARTBEAT_INTERVAL_MS` | `30000` | Intervalle d'envoi du signal "je suis vivant" (ms) |
 | `RUNNER_HEALTH_FILE` | `/tmp/runner.health` | Fichier de fraîcheur lu par le `HEALTHCHECK` Docker |
 | `RUNNER_HEALTH_STALE_MS` | `90000` | Au delà de ce délai sans mise à jour du fichier, le container passe `unhealthy` |
+| `HEARTBEAT_FAILURE_WARN_THRESHOLD` | `3` | Nombre de heartbeats KO d'affilée avant de logger un warn explicite (utile pour diagnostiquer un dashboard inaccessible) |
 
 ## Healthcheck Docker
 

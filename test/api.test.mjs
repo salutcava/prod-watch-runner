@@ -24,7 +24,8 @@ describe("sendHeartbeat", () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true, status: 200, json: async () => ({ ok: true }), text: async () => "",
     });
-    await sendHeartbeat({ dashboardUrl: URL, token: TOKEN });
+    const result = await sendHeartbeat({ dashboardUrl: URL, token: TOKEN });
+    expect(result.ok).toBe(true);
     expect(globalThis.fetch).toHaveBeenCalledOnce();
     const [calledUrl, opts] = globalThis.fetch.mock.calls[0];
     expect(calledUrl).toBe(`${URL}/api/runner/heartbeat`);
@@ -40,6 +41,44 @@ describe("sendHeartbeat", () => {
     await sendHeartbeat({ dashboardUrl: URL, token: TOKEN });
     expect(process.exit).toHaveBeenCalledWith(3);
   });
+
+  it("retourne { ok:false } sans throw quand le reseau est down (apres retries)", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    const before = Date.now();
+    const result = await sendHeartbeat({ dashboardUrl: URL, token: TOKEN });
+    const elapsed = Date.now() - before;
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("ECONNREFUSED");
+    // 4 tentatives au total (1 + 3 retries), donc fetch appele 4 fois.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    // Backoff cumule attendu : ~1s + ~2s + ~4s = ~7s minimum (avec jitter).
+    expect(elapsed).toBeGreaterThan(3000);
+  }, 15000);
+
+  it("respecte le header Retry-After (delta-seconds) sur 429", async () => {
+    let calls = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: false, status: 429,
+          headers: { get: (h) => (h === "Retry-After" ? "1" : null) },
+          json: async () => ({}), text: async () => "",
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => "" };
+    });
+    const before = Date.now();
+    const result = await sendHeartbeat({ dashboardUrl: URL, token: TOKEN });
+    const elapsed = Date.now() - before;
+    expect(result.ok).toBe(true);
+    expect(calls).toBe(2);
+    // Retry-After: 1 => au moins ~1000ms d'attente. Le backoff exponentiel
+    // sans jitter aurait donne 1000ms aussi pour attempt 0, donc on verifie
+    // qu'on est dans une fourchette compatible.
+    expect(elapsed).toBeGreaterThanOrEqual(900);
+    expect(elapsed).toBeLessThan(2000);
+  }, 10000);
 });
 
 describe("pollNextJob", () => {

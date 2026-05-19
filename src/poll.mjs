@@ -26,9 +26,17 @@ import { touchHealth } from "./health.mjs";
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || "10000", 10);
 const HEARTBEAT_INTERVAL_MS = parseInt(process.env.HEARTBEAT_INTERVAL_MS || "30000", 10);
+// Au bout de 3 heartbeats KO d'affilee (= 90s sans contact dashboard), on
+// remonte un warn structure pour aider le diagnostic cote client. Aligne
+// avec RUNNER_HEALTH_STALE_MS pour que la trace coincide avec le moment ou
+// Docker passe le container "unhealthy".
+const HEARTBEAT_FAILURE_WARN_THRESHOLD = parseInt(
+  process.env.HEARTBEAT_FAILURE_WARN_THRESHOLD || "3", 10
+);
 
 let shuttingDown = false;
 let currentJobId = null;
+let consecutiveHeartbeatFailures = 0;
 
 process.on("SIGTERM", () => {
   logger.info("SIGTERM recu - arret apres job en cours");
@@ -65,7 +73,9 @@ async function main() {
   // doit pas faire crasher le container client.
   const heartbeatTimer = setInterval(() => {
     sendHeartbeat({ dashboardUrl, token })
+      .then((result) => trackHeartbeatResult(result))
       .catch((err) => {
+        // sendHeartbeat ne throw plus, mais on garde le catch par defensive.
         logger.warn("Heartbeat exception (non bloquant)", { error: String(err) });
       })
       .finally(() => touchHealth());
@@ -143,6 +153,25 @@ async function main() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function trackHeartbeatResult(result) {
+  if (result && result.ok) {
+    if (consecutiveHeartbeatFailures > 0) {
+      logger.info(
+        `Heartbeat OK apres ${consecutiveHeartbeatFailures} echec(s) - dashboard de nouveau accessible`
+      );
+    }
+    consecutiveHeartbeatFailures = 0;
+    return;
+  }
+  consecutiveHeartbeatFailures += 1;
+  if (consecutiveHeartbeatFailures === HEARTBEAT_FAILURE_WARN_THRESHOLD) {
+    logger.warn(
+      `Heartbeat KO ${consecutiveHeartbeatFailures} fois consecutives - dashboard probablement inaccessible`,
+      result || {}
+    );
+  }
 }
 
 main().catch((err) => {
