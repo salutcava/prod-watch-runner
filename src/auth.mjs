@@ -35,3 +35,19 @@ export function buildAuthHeaders(token) {
     "User-Agent": `prod-watch-runner/${process.env.npm_package_version || "0.1.0"}`,
   };
 }
+
+/**
+ * Extrait le slug client depuis le token (format pwr_<slug>_<64hex>). Utilise
+ * par l'executor pour valider que le payload du job recu via /api/runner/poll
+ * appartient bien au slug du token : defense en profondeur contre une faute
+ * cote dashboard qui ferait fuiter les configs/scenarios d'un autre client.
+ *
+ * Retourne null si le token n'a pas le format attendu (le caller a deja
+ * valide via readRunnerToken au demarrage, donc en pratique ne retourne
+ * null que si on appelle avec un token brut non valide).
+ */
+export function extractSlugFromToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const m = token.match(/^pwr_([a-z0-9][a-z0-9_-]*)_[0-9a-f]{64}$/);
+  return m ? m[1] : null;
+}

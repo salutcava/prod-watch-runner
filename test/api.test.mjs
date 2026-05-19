@@ -90,14 +90,35 @@ describe("pollNextJob", () => {
     expect(job).toBeNull();
   });
 
-  it("retourne le job si 200", async () => {
+  it("retourne le job si 200 (ancien shape sans clientConfig/scenarios)", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true, status: 200,
       json: async () => ({ job: { jobId: 42, slug: "acme", scenario: "login" } }),
       text: async () => "",
     });
     const job = await pollNextJob({ dashboardUrl: URL, token: TOKEN });
-    expect(job).toEqual({ jobId: 42, slug: "acme", scenario: "login" });
+    // Retro-compatible : clientConfig et scenarios sont null si le dashboard
+    // n'envoie pas le nouveau shape (rolling deploy).
+    expect(job).toEqual({
+      jobId: 42, slug: "acme", scenario: "login",
+      clientConfig: null, scenarios: null,
+    });
+  });
+
+  it("retourne le job avec clientConfig + scenarios si nouveau shape", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({
+        job: { jobId: 42, slug: "acme", product: "main", scenario: "login" },
+        clientConfig: { products: { main: { defaultEnv: "prod" } } },
+        scenarios: { "acme-main-login": { name: "Login", steps: [] } },
+      }),
+      text: async () => "",
+    });
+    const job = await pollNextJob({ dashboardUrl: URL, token: TOKEN });
+    expect(job.jobId).toBe(42);
+    expect(job.clientConfig.products.main.defaultEnv).toBe("prod");
+    expect(job.scenarios["acme-main-login"].name).toBe("Login");
   });
 
   it("exit 3 si 401", async () => {

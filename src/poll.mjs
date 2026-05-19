@@ -18,7 +18,7 @@
  *   - 401 sur heartbeat ou poll : exit 3 (token revoque)
  *   - Erreur critique : exit 1
  */
-import { readRunnerToken, readDashboardUrl } from "./auth.mjs";
+import { readRunnerToken, readDashboardUrl, extractSlugFromToken } from "./auth.mjs";
 import { sendHeartbeat, pollNextJob, pushRunResults } from "./api.mjs";
 import { executeJob } from "./executor.mjs";
 import { logger } from "./logger.mjs";
@@ -50,9 +50,11 @@ process.on("SIGINT", () => {
 
 async function main() {
   const token = readRunnerToken();
+  const tokenSlug = extractSlugFromToken(token);
   const dashboardUrl = readDashboardUrl();
   logger.info(`Prod Watch Runner demarre`, {
     dashboardUrl,
+    slug: tokenSlug,
     pollIntervalMs: POLL_INTERVAL_MS,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
   });
@@ -125,7 +127,7 @@ async function main() {
 
     let payload;
     try {
-      payload = await executeJob(job);
+      payload = await executeJob(job, tokenSlug);
     } catch (err) {
       logger.error("Execute job a leve une exception non recuperee", { error: String(err) });
       payload = {

@@ -98,7 +98,17 @@ export async function pollNextJob({ dashboardUrl, token }) {
     return null;
   }
   const body = await res.json().catch(() => null);
-  return body && body.job ? body.job : null;
+  if (!body || !body.job) return null;
+  // Le dashboard envoie maintenant clientConfig + scenarios dans le payload
+  // pour que le runner ecrive ces fichiers en temp dir avant de spawn
+  // Playwright (cf. executor.mjs). Les anciennes versions de dashboard ne
+  // les envoient pas (rolling deploy retro-compatible : on les laisse null
+  // dans ce cas, executor.mjs aura le code defensif pour gerer).
+  return {
+    ...body.job,
+    clientConfig: body.clientConfig || null,
+    scenarios: body.scenarios || null,
+  };
 }
 
 export async function pushRunResults({ dashboardUrl, token, payload }) {

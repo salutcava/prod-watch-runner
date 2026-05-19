@@ -45,6 +45,24 @@ describe("readRunnerToken", () => {
   });
 });
 
+describe("extractSlugFromToken", () => {
+  it("extrait le slug d'un token valide", async () => {
+    const { extractSlugFromToken } = await import("../src/auth.mjs");
+    expect(extractSlugFromToken("pwr_acme_" + "a".repeat(64))).toBe("acme");
+    expect(extractSlugFromToken("pwr_acme-test_" + "a".repeat(64))).toBe("acme-test");
+    expect(extractSlugFromToken("pwr_a1b2c3_" + "f".repeat(64))).toBe("a1b2c3");
+  });
+
+  it("retourne null sur un token mal forme", async () => {
+    const { extractSlugFromToken } = await import("../src/auth.mjs");
+    expect(extractSlugFromToken("")).toBeNull();
+    expect(extractSlugFromToken(null)).toBeNull();
+    expect(extractSlugFromToken("not-a-token")).toBeNull();
+    expect(extractSlugFromToken("pwr_acme_short")).toBeNull();
+    expect(extractSlugFromToken("pwr__" + "a".repeat(64))).toBeNull(); // slug vide
+  });
+});
+
 describe("readDashboardUrl", () => {
   const originalEnv = process.env.PROD_WATCH_URL;
   const originalExit = process.exit;
