@@ -1,103 +1,113 @@
 # Prod Watch Runner
 
-Container Docker self-hosted qui execute les tests Playwright Prod Watch sur l'infrastructure d'un client (plan Scale / Enterprise).
+Container Docker qui exécute les tests Playwright Prod Watch sur votre propre infrastructure (plan Scale / Enterprise).
 
-Le runner se connecte au dashboard Prod Watch via HTTPS sortant uniquement, recupere les jobs assignes a son client, execute les scenarios localement (acces aux environnements internes / staging / VPN sans expositions externes), et pousse les resultats vers le dashboard.
+Utile si vos environnements de recette / preprod sont **derrière un VPN, un firewall ou un réseau interne** et ne sont pas accessibles depuis l'extérieur. Le runner tourne chez vous, accède aux URLs internes, et remonte uniquement les résultats vers le dashboard Prod Watch via HTTPS sortant.
 
-## Doc utilisateur
+## Pourquoi installer ce runner
 
-L'installation et la configuration cote client sont documentees sur :
+- **Vos données ne quittent pas votre réseau** : les credentials de test, les captures d'écran et les vidéos restent sur votre infrastructure jusqu'à ce que le runner pousse les résultats finaux.
+- **Connexion sortante uniquement** : aucun port à ouvrir en entrée, le runner se connecte au dashboard, jamais l'inverse.
+- **Pas de quota** : les runs exécutés par votre runner ne consomment pas le plafond de concurrence partagé du cloud Prod Watch.
+- **Compatible VPN, secteur régulé** : adapté banque / santé / défense / data sensible.
 
-https://app.prod-watch.com/docs?doc=runner-self-hosted
+## Quick start
 
-## Architecture
-
-```
-Client (votre infra)              Prod Watch (chez nous)
-─────────────────────             ──────────────────────
-prod-watch-runner                 Dashboard + API
-   │                                   │
-   │  POST /api/runner/heartbeat       │
-   │ ────────────────────────────────► │  (toutes les 30s)
-   │                                   │
-   │  POST /api/runner/poll            │
-   │ ────────────────────────────────► │  (toutes les 10s)
-   │ ◄──────────────────────────────── │  Job a executer
-   │                                   │
-   │  Lance Playwright sur staging    │
-   │  / preprod accessibles localement │
-   │                                   │
-   │  POST /api/admin/push-run         │
-   │ ────────────────────────────────► │  Resultats (status,
-   │ ◄──────────────────────────────── │   videos, screenshots)
-```
-
-## Quick start (cote client)
+Avant de lancer, il vous faut un `RUNNER_TOKEN`. Demandez-le à votre interlocuteur Prod Watch (ils le génèrent en 30 secondes depuis leur back-office).
 
 ```bash
 docker run -d \
   --name prod-watch-runner \
   --restart unless-stopped \
-  -e RUNNER_TOKEN=pwr_<slug>_<hex> \
+  -e RUNNER_TOKEN=pwr_votreslug_xxxxxxxxxxxxxxxx \
   ghcr.io/salutcava/prod-watch-runner:latest
 ```
 
-Le token est fourni par l'equipe Prod Watch a la signature du contrat Scale / Enterprise.
+Le container est sans état : vous pouvez le supprimer et le relancer sans perdre quoi que ce soit. Toutes les configurations vivent sur le dashboard Prod Watch.
 
-## Build (cote Prod Watch)
+## Vérifier que ça marche
+
+Une fois lancé, le runner ping le dashboard toutes les 30 secondes. Quelques secondes après le `docker run`, votre runner doit apparaître **vert (actif)** dans le back-office Prod Watch (fiche client > onglet "Runner self-hosted").
+
+Si le runner reste rouge :
 
 ```bash
-GITHUB_TOKEN=ghp_xxx ./build.sh [tag]
+docker logs prod-watch-runner --tail 50
 ```
 
-Le build est multi-stage :
-1. **Builder** : clone le repo prive `qa-saas` et bundle + minifie en 1 fichier `qa-saas/runner.cjs` via esbuild.
-2. **Runtime** : copie uniquement le bundle minifie + le code du runner. Le code source en clair de `qa-saas` n'apparait JAMAIS dans l'image finale.
+Les erreurs courantes (token invalide, dashboard injoignable, etc.) sont loggées en clair avec un `level: "error"`.
 
-Le `GITHUB_TOKEN` est utilise UNIQUEMENT pendant le stage builder pour cloner `qa-saas` ; il n'est pas persiste dans l'image. En CI (GitHub Actions), il est stocke comme secret `QA_SAAS_PULL_TOKEN`.
+## Prérequis
 
-## Variables d'environnement
+- **Docker** version >= 20.10 (Linux, macOS ou Windows avec WSL2)
+- **RAM** : 2 Go minimum, 4 Go recommandé si vous lancez plusieurs tests en parallèle
+- **CPU** : 2 cores minimum
+- **Réseau** : accès sortant HTTPS (port 443) vers `app.prod-watch.com` et `ghcr.io` (pour les mises à jour)
+- **Architecture** : `linux/amd64` ou `linux/arm64` (Apple Silicon, Raspberry Pi, AWS Graviton...)
 
-| Variable | Default | Role |
+## Configuration
+
+Toutes les options se passent par variable d'environnement (`-e VAR=value` dans `docker run`).
+
+| Variable | Défaut | Rôle |
 |---|---|---|
-| `RUNNER_TOKEN` | (obligatoire) | Token d'identification du runner, format `pwr_<slug>_<64hex>` |
-| `PROD_WATCH_URL` | `https://app.prod-watch.com` | URL du dashboard Prod Watch |
-| `POLL_INTERVAL_MS` | `10000` | Intervalle de poll des nouveaux jobs (ms) |
-| `HEARTBEAT_INTERVAL_MS` | `30000` | Intervalle de heartbeat (ms) |
-| `QA_SAAS_PATH` | `/app/qa-saas` | Path interne du bundle qa-saas |
-| `QA_SAAS_ENTRY` | `/app/qa-saas/runner.cjs` | Entry point du bundle qa-saas |
+| `RUNNER_TOKEN` | (obligatoire) | Token d'identification fourni par Prod Watch, format `pwr_<slug>_<64hex>` |
+| `PROD_WATCH_URL` | `https://app.prod-watch.com` | URL du dashboard. À surcharger si vous testez contre une instance de démo |
+| `POLL_INTERVAL_MS` | `10000` | Intervalle de récupération des nouveaux tests à exécuter (ms) |
+| `HEARTBEAT_INTERVAL_MS` | `30000` | Intervalle d'envoi du signal "je suis vivant" (ms) |
 
-## Codes de sortie
+## Mettre à jour
 
-| Code | Sens |
-|---|---|
-| `0` | Arret propre (SIGTERM / SIGINT) |
-| `1` | Erreur fatale dans la boucle principale |
-| `2` | Configuration invalide (RUNNER_TOKEN absent ou format invalide) |
-| `3` | Token revoque ou invalide cote dashboard (401 sur heartbeat/poll) |
+```bash
+docker pull ghcr.io/salutcava/prod-watch-runner:latest
+docker stop prod-watch-runner
+docker rm prod-watch-runner
+docker run -d --name prod-watch-runner ... (votre commande initiale)
+```
 
-Le client doit `docker restart prod-watch-runner` apres avoir reconfigure un nouveau token en cas d'exit 3.
+Les mises à jour sont rares et compatibles ascendant : aucune action côté configuration ne devrait être nécessaire.
 
 ## Logs
 
-Les logs sortent en JSON structure sur stdout (format Filebeat / Loki / Splunk compatible).
+Format JSON structuré sur stdout, compatible Filebeat / Loki / Splunk / Datadog Agent.
 
 ```json
 {"ts":"2026-05-19T00:30:00Z","level":"info","msg":"Job recu","slug":"acme","jobId":42}
+{"ts":"2026-05-19T00:30:42Z","level":"info","msg":"Resultats pousses","status":"pass","duration_ms":42100}
 ```
 
-Visualisation : `docker logs prod-watch-runner` ou bind sur un agent log d'entreprise.
+Visualisation rapide : `docker logs -f prod-watch-runner`.
 
-## Securite
+## Codes de sortie
 
-Cf. https://app.prod-watch.com/security
+Si le container s'arrête, le code de sortie indique pourquoi :
 
-- Auth : Bearer token Bearer unique par container, revocable a tout moment
-- Pas d'inbound network (le runner fait du sortant uniquement)
-- Credentials de tests : pull on-demand depuis le dashboard, jamais persistes sur disque
-- Code source qa-saas : bundle + minifie + obfusque (variables renommees), pas en clair
-- Image publiee sur GitHub Container Registry (privee par defaut)
+| Code | Sens | Action |
+|---|---|---|
+| `0` | Arrêt propre (SIGTERM reçu) | Aucune, c'est normal |
+| `1` | Erreur fatale dans la boucle principale | Lire les logs, ouvrir un ticket support |
+| `2` | `RUNNER_TOKEN` absent ou mal formaté | Vérifier la variable d'environnement |
+| `3` | Token révoqué côté dashboard | Demander un nouveau token à Prod Watch et relancer |
+
+Avec `--restart unless-stopped`, Docker redémarre automatiquement le container sur les exits `1` (transient). Les exits `2` et `3` nécessitent une intervention manuelle.
+
+## Sécurité
+
+- **Authentification** : Bearer token unique par container, révocable à tout moment depuis le dashboard Prod Watch.
+- **Pas de port entrant** : le runner ne fait que du HTTPS sortant.
+- **Credentials de tests** : transmis chiffrés à la demande au moment de l'exécution, jamais persistés sur disque dans le container.
+- **Code propriétaire** : le moteur Playwright Prod Watch est packagé dans l'image sous forme de bundle minifié, pas de code source en clair.
+
+Plus de détails : https://app.prod-watch.com/security
+
+## Documentation complète
+
+https://app.prod-watch.com/docs?doc=runner-self-hosted
+
+## Support
+
+Vous êtes client Prod Watch ? Contactez votre interlocuteur habituel ou écrivez à `support@prod-watch.com`.
 
 ## Licence
 
-UNLICENSED - propriete de LAMSTER (Prod Watch). Reservation des droits par LAMSTER.
+UNLICENSED - propriété de LAMSTER (Prod Watch). Tous droits réservés.
