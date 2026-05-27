@@ -107,6 +107,17 @@ export async function executeJob(job, expectedSlug = null) {
     }
 
     // Env vars consumees par qa-saas/scripts/runner-execute.js.
+    // NODE_ENV override : le bundle qa-saas contient runner/heartbeat.ts qui
+    // est un HeartbeatClient interne au moteur (different du heartbeat HTTP
+    // runner→dashboard). En NODE_ENV=production, il throw si
+    // INTERNAL_API_URL / INTERNAL_API_TOKEN manquent (fail-safe cote cloud
+    // pour ne pas perdre la trace d'un run). En contexte self-hosted, ces
+    // env vars sont des secrets internes du dashboard qu'on ne veut PAS
+    // exposer aux clients. On force NODE_ENV=development pour que le
+    // HeartbeatClient skip silencieusement (sans throw ni warn) ; on garde
+    // notre propre heartbeat HTTP /api/runner/heartbeat pour la liveness.
+    // RUNNER_SELF_HOSTED=1 : marker explicite, prevu pour qu'un futur patch
+    // de runner/heartbeat.ts puisse le detecter proprement.
     const env = {
       ...process.env,
       CLIENT: job.slug,
@@ -116,6 +127,8 @@ export async function executeJob(job, expectedSlug = null) {
       RUN_LABEL: job.runLabel || "",
       TRIGGER_TYPE: job.triggerType || "manual",
       RUN_OUTPUT_DIR: runOutputDir,
+      NODE_ENV: "development",
+      RUNNER_SELF_HOSTED: "1",
     };
 
     let stdout = "";
