@@ -142,6 +142,16 @@ COPY src /app/src
 # Pas de devDependencies (vitest etc.) en runtime, le runner Node n'a aucune
 # dependance runtime tierce (fetch natif Node 22).
 
+# Hardening secu V0.2.2 : drop le root. La base mcr.microsoft.com/playwright
+# ship un user `pwuser` UID 1000 dedie pour faire tourner Chromium sans
+# privileges. On chown tout /app vers pwuser puis on switch.
+# Pourquoi : si un exploit chromium 0day passe, l'attaquant est limite a UID
+# 1000 dans le container. Combine a un docker run --read-only + --tmpfs cote
+# client (cf. doc Production setup), surface d'attaque tres reduite.
+# /tmp/runner.health (HEALTHCHECK) reste writable car /tmp = mode 1777.
+RUN chown -R pwuser:pwuser /app
+USER pwuser
+
 # Variables d'env par defaut (peuvent etre override par `-e VAR=...`)
 ENV PROD_WATCH_URL=https://app.prod-watch.com
 ENV POLL_INTERVAL_MS=10000

@@ -1,6 +1,6 @@
 {
   "name": "prod-watch-runner",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Self-hosted Docker runner for Prod Watch QA managed service",
   "type": "module",
   "main": "src/poll.mjs",
