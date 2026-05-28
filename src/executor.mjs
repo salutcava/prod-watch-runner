@@ -171,13 +171,16 @@ export async function executeJob(job, expectedSlug = null) {
       results = null;
     }
 
-    if (!results || exitCode !== 0) {
+    // exit_code != 0 n'est PAS un crash en soi : Playwright sort en 1 des qu'au
+    // moins un test failed. On ne tombe en crashPayload (passed/failed/total = 0)
+    // que si runner-execute.js n'a pas pondu de results.json du tout.
+    if (!results) {
       return crashPayload(job, startedAt, exitCode, stderr || stdout, durationSeconds);
     }
 
     return {
       slug: job.slug,
-      status: results.failed > 0 ? "fail" : "pass",
+      status: (results.failed > 0 || exitCode !== 0) ? "fail" : "pass",
       passed: results.passed || 0,
       failed: results.failed || 0,
       total: results.total || 0,
@@ -191,6 +194,7 @@ export async function executeJob(job, expectedSlug = null) {
       environment: job.environment || null,
       exit_code: exitCode,
       error_details: results.error_details || null,
+      crash_log_tail: exitCode !== 0 ? String(stderr || stdout).slice(-16384) : null,
     };
   } finally {
     // Cleanup garanti : unlink des fichiers ecrits (configs + scenarios) ET

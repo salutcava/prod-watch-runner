@@ -153,7 +153,38 @@ describe("executor.executeJob", () => {
     const { executeJob } = await import("../src/executor.mjs");
     const job = { jobId: 1, slug: "acme", clientConfig: null, scenarios: null };
     const payload = await executeJob(job, "acme");
-    // L'entry est appele (mais on a force exit 1), donc on a un crash payload
     expect(payload.status).toBe("fail");
+  }, 10000);
+
+  // Regression : avant le fix de mai 2026, exitCode != 0 declenchait
+  // crashPayload meme quand results.json etait valide, ce qui ecrasait
+  // les compteurs reels (passed/failed/total) par 0. En pratique Playwright
+  // sort en exit 1 des qu'un seul test fail : le client voyait tous ses
+  // runs avec des fails comme "0/0 tests" en DB au lieu des vrais chiffres.
+  it("exit_code != 0 + results.json valide : preserve les compteurs reels (regression)", async () => {
+    writeFakeEntry(`
+      const fs = require('fs');
+      const path = require('path');
+      fs.writeFileSync(path.join(process.env.RUN_OUTPUT_DIR, 'results.json'),
+        JSON.stringify({ passed: 2, failed: 5, total: 7, scenarios: "a,b,c,d,e,f,g" }));
+      process.stderr.write("some playwright failure output");
+      process.exit(1);
+    `);
+
+    const { executeJob } = await import("../src/executor.mjs");
+    const job = {
+      jobId: 13,
+      slug: "testing",
+      product: "dashboard",
+      clientConfig: { products: { dashboard: {} } },
+      scenarios: { "testing-dashboard-x": { name: "X" } },
+    };
+    const payload = await executeJob(job, "testing");
+    expect(payload.status).toBe("fail");
+    expect(payload.passed).toBe(2);
+    expect(payload.failed).toBe(5);
+    expect(payload.total).toBe(7);
+    expect(payload.exit_code).toBe(1);
+    expect(payload.crash_log_tail).toContain("some playwright failure output");
   }, 10000);
 });
