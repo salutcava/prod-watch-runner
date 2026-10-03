@@ -12,14 +12,17 @@
  *   - PROD_WATCH_URL (default: https://app.prod-watch.com)
  *   - POLL_INTERVAL_MS (default: 10000)
  *   - HEARTBEAT_INTERVAL_MS (default: 30000)
+ *   - REVOKED_RECHECK_MS (default: 900000) : reverification du jeton en veille
  *
  * Arret :
  *   - SIGTERM/SIGINT : graceful shutdown apres le job en cours
- *   - 401 sur heartbeat ou poll : exit 3 (token revoque)
+ *   - 401 sur heartbeat ou poll : pas d'arret, mise en veille et
+ *     reverification du jeton toutes les REVOKED_RECHECK_MS (cf. revoked.mjs)
  *   - Erreur critique : exit 1
  */
 import { readRunnerToken, readDashboardUrl, extractSlugFromToken } from "./auth.mjs";
-import { sendHeartbeat, pollNextJob, pushRunResults } from "./api.mjs";
+import { sendHeartbeat, pollNextJob, pushRunResults, TokenRevokedError } from "./api.mjs";
+import { waitForTokenAccepted, revokedRecheckMs } from "./revoked.mjs";
 import { executeJob } from "./executor.mjs";
 import { logger } from "./logger.mjs";
 import { touchHealth } from "./health.mjs";
@@ -38,6 +41,9 @@ const HEARTBEAT_FAILURE_WARN_THRESHOLD = parseInt(
 let shuttingDown = false;
 let currentJobId = null;
 let consecutiveHeartbeatFailures = 0;
+// Jeton refuse par le dashboard : la boucle cesse de demander des jobs et le
+// heartbeat periodique se tait, le temps que waitForTokenAccepted revalide.
+let tokenRevoked = false;
 
 process.on("SIGTERM", () => {
   logger.info("SIGTERM recu - arret apres job en cours");
@@ -66,7 +72,7 @@ async function main() {
   // Heartbeat initial pour signaler immediatement la presence du runner
   // (sinon il faut attendre 30s avant que findActiveRunnerForClient remonte
   // ce runner cote dashboard).
-  await sendHeartbeat({ dashboardUrl, token });
+  trackHeartbeatResult(await sendHeartbeat({ dashboardUrl, token }));
   await touchHealth();
 
   // Heartbeat periodique (setInterval, separe de la boucle poll). On touche
@@ -75,6 +81,10 @@ async function main() {
   // communiquer", pas "le dashboard est joignable". Un dashboard down ne
   // doit pas faire crasher le container client.
   const heartbeatTimer = setInterval(() => {
+    if (tokenRevoked) {
+      touchHealth();
+      return;
+    }
     sendHeartbeat({ dashboardUrl, token })
       .then((result) => trackHeartbeatResult(result))
       .catch((err) => {
@@ -88,6 +98,20 @@ async function main() {
   // chevaucher si un job prend > poll_interval). On chaine sleep + poll en
   // sequence.
   while (!shuttingDown) {
+    if (tokenRevoked) {
+      const accepted = await waitForTokenAccepted({
+        sendHeartbeat: () => sendHeartbeat({ dashboardUrl, token }),
+        isShuttingDown: () => shuttingDown,
+        sleep,
+        touch: touchHealth,
+      });
+      if (accepted) {
+        tokenRevoked = false;
+        logger.info("Jeton de nouveau accepte par le dashboard - reprise du runner");
+      }
+      continue;
+    }
+
     // Avant de demander un nouveau job, tenter de rejouer ce qui n'a pas pu
     // etre pousse aux iterations precedentes (dashboard down/timeout). On le
     // fait dans la boucle plutot qu'en background pour eviter d'avoir 2 push
@@ -105,6 +129,10 @@ async function main() {
     try {
       job = await pollNextJob({ dashboardUrl, token });
     } catch (err) {
+      if (err instanceof TokenRevokedError) {
+        markTokenRevoked();
+        continue;
+      }
       logger.warn("Poll exception (retry implicite via boucle)", { error: String(err) });
       job = null;
     }
@@ -171,11 +199,28 @@ async function main() {
   process.exit(0);
 }
 
+function formatDelay(ms) {
+  return ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${Math.round(ms / 1000)} s`;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function markTokenRevoked() {
+  if (tokenRevoked) return;
+  tokenRevoked = true;
+  logger.error(
+    `Runner token revoque ou invalide. Runner en veille, nouvelle verification toutes les ${formatDelay(revokedRecheckMs())}. ` +
+      "Pour un nouveau jeton : relancer le conteneur avec le nouveau RUNNER_TOKEN."
+  );
+}
+
 function trackHeartbeatResult(result) {
+  if (result && result.revoked) {
+    markTokenRevoked();
+    return;
+  }
   if (result && result.ok) {
     if (consecutiveHeartbeatFailures > 0) {
       logger.info(

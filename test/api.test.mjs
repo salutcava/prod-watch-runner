@@ -3,7 +3,7 @@
  * Mock global de fetch pour simuler les reponses du dashboard.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { sendHeartbeat, pollNextJob, pushRunResults } from "../src/api.mjs";
+import { sendHeartbeat, pollNextJob, pushRunResults, TokenRevokedError } from "../src/api.mjs";
 
 const URL = "https://test.prod-watch.com";
 const TOKEN = "pwr_test_" + "a".repeat(64);
@@ -33,13 +33,14 @@ describe("sendHeartbeat", () => {
     expect(opts.headers.Authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("exit 3 si 401 (token revoque)", async () => {
+  it("401 : retourne { revoked:true } sans quitter le process", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false, status: 401, json: async () => ({}), text: async () => "",
     });
     process.exit = vi.fn();
-    await sendHeartbeat({ dashboardUrl: URL, token: TOKEN });
-    expect(process.exit).toHaveBeenCalledWith(3);
+    const result = await sendHeartbeat({ dashboardUrl: URL, token: TOKEN });
+    expect(result).toEqual({ ok: false, status: 401, revoked: true });
+    expect(process.exit).not.toHaveBeenCalled();
   });
 
   it("retourne { ok:false } sans throw quand le reseau est down (apres retries)", async () => {
@@ -121,13 +122,13 @@ describe("pollNextJob", () => {
     expect(job.scenarios["acme-main-login"].name).toBe("Login");
   });
 
-  it("exit 3 si 401", async () => {
+  it("401 : leve TokenRevokedError sans quitter le process", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false, status: 401, json: async () => ({}), text: async () => "",
     });
     process.exit = vi.fn();
-    await pollNextJob({ dashboardUrl: URL, token: TOKEN });
-    expect(process.exit).toHaveBeenCalledWith(3);
+    await expect(pollNextJob({ dashboardUrl: URL, token: TOKEN })).rejects.toBeInstanceOf(TokenRevokedError);
+    expect(process.exit).not.toHaveBeenCalled();
   });
 });
 

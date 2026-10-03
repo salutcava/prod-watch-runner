@@ -57,6 +57,7 @@ Toutes les options se passent par variable d'environnement (`-e VAR=value` dans 
 | `HEARTBEAT_INTERVAL_MS` | `30000` | Intervalle d'envoi du signal "je suis vivant" (ms) |
 | `RUNNER_HEALTH_FILE` | `/tmp/runner.health` | Fichier de fraîcheur lu par le `HEALTHCHECK` Docker |
 | `RUNNER_HEALTH_STALE_MS` | `90000` | Au delà de ce délai sans mise à jour du fichier, le container passe `unhealthy` |
+| `REVOKED_RECHECK_MS` | `900000` | Quand le jeton est refusé, intervalle entre deux vérifications du jeton pendant la veille (ms) |
 | `HEARTBEAT_FAILURE_WARN_THRESHOLD` | `3` | Nombre de heartbeats KO d'affilée avant de logger un warn explicite (utile pour diagnostiquer un dashboard inaccessible) |
 | `RUNNER_QUEUE_DIR` | `/tmp/runner-queue` | Dossier de persistance des résultats de tests quand le dashboard est temporairement inaccessible. À bind-mounter sur un volume si vous voulez survivre aux `docker restart` |
 | `RUNNER_QUEUE_MAX_SIZE` | `100` | Nombre maximum de payloads stockés localement. Au-delà, les nouveaux résultats sont droppés avec un log d'erreur |
@@ -121,9 +122,18 @@ Si le container s'arrête, le code de sortie indique pourquoi :
 | `0` | Arrêt propre (SIGTERM reçu) | Aucune, c'est normal |
 | `1` | Erreur fatale dans la boucle principale | Lire les logs, ouvrir un ticket support |
 | `2` | `RUNNER_TOKEN` absent ou mal formaté | Vérifier la variable d'environnement |
-| `3` | Token révoqué côté dashboard | Demander un nouveau token à Prod Watch et relancer |
 
-Avec `--restart unless-stopped`, Docker redémarre automatiquement le container sur les exits `1` (transient). Les exits `2` et `3` nécessitent une intervention manuelle.
+Avec `--restart unless-stopped`, Docker relance le container quel que soit le code de sortie, y compris `2` : un `RUNNER_TOKEN` absent ou mal formaté se voit donc dans `docker logs` dès l'installation, le container redémarrant chaque minute avec la même erreur.
+
+## Jeton révoqué ou invalide
+
+Le runner ne s'arrête pas quand le dashboard refuse son jeton (HTTP 401). Il écrit une seule ligne d'erreur dans ses logs, cesse de demander des tests, puis revérifie le jeton toutes les 15 minutes (`REVOKED_RECHECK_MS`). Le container reste `healthy` pendant cette veille.
+
+- Refus passager (incident côté dashboard) : le runner reprend tout seul à la vérification suivante.
+- Jeton révoqué : une révocation est définitive. Demander un nouveau jeton à Prod Watch et relancer le container avec le nouveau `RUNNER_TOKEN` (`docker rm -f prod-watch-runner` puis la commande du Quick start).
+- Runner plus utile : `docker stop prod-watch-runner && docker rm prod-watch-runner`.
+
+Jusqu'à la v0.2.3, le runner quittait en code `3`. Docker le relançait chaque minute et le runner se faisait refuser à chaque fois, sans fin : une requête refusée par minute contre le dashboard, sans que personne ne soit prévenu. Le code `3` n'est plus utilisé depuis la v0.3.0.
 
 ## Sécurité
 

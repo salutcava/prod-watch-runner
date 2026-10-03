@@ -8,6 +8,19 @@
 import { buildAuthHeaders } from "./auth.mjs";
 import { logger } from "./logger.mjs";
 
+/**
+ * Levee par pollNextJob quand le dashboard repond 401 : le jeton est revoque
+ * ou invalide. Le runner ne quitte pas (Docker le relancerait en boucle avec
+ * --restart unless-stopped, incident du 03/10/2026 : 109 000 relances en
+ * quatre mois) ; poll.mjs passe en veille et reverifie le jeton.
+ */
+export class TokenRevokedError extends Error {
+  constructor() {
+    super("Runner token revoque ou invalide");
+    this.name = "TokenRevokedError";
+  }
+}
+
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1000;
 const RETRY_JITTER_RATIO = 0.25;
@@ -72,8 +85,8 @@ export async function sendHeartbeat({ dashboardUrl, token }) {
     return { ok: false, error: String(err) };
   }
   if (res.status === 401) {
-    logger.error("Runner token revoke ou invalide. Arret du runner.");
-    process.exit(3);
+    // Pas de log ici : poll.mjs logge l'entree en veille une seule fois.
+    return { ok: false, status: 401, revoked: true };
   }
   if (!res.ok) {
     logger.warn(`Heartbeat HTTP ${res.status}`);
@@ -88,10 +101,7 @@ export async function pollNextJob({ dashboardUrl, token }) {
     { method: "POST", headers: buildAuthHeaders(token), body: "{}" },
     { label: "poll" }
   );
-  if (res.status === 401) {
-    logger.error("Runner token revoke ou invalide. Arret du runner.");
-    process.exit(3);
-  }
+  if (res.status === 401) throw new TokenRevokedError();
   if (res.status === 204) return null; // aucun job
   if (!res.ok) {
     logger.warn(`Poll HTTP ${res.status}`);
